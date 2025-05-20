@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+
+import argparse
+import re
+import sys
+from collections import defaultdict
+
+def parse_cgraph_file(filename):
+    """Parse a .cgraph file and extract function names and call relationships."""
+    functions = {}
+    current_func_id = None
+    in_called_by = False
+    in_calls = False
+    in_symbol_table = False
+
+    try:
+        with open(filename, 'r') as f:
+            for line in f:
+                line = line.rstrip()
+
+                # Identify the symbol table section
+                if line.strip() == "Initial Symbol table:":
+                    in_symbol_table = True
+                    continue
+                elif line.strip() == "Removing unused symbols:":
+                    in_symbol_table = False
+                    break
+
+                if not in_symbol_table:
+                    continue
+
+                # Match function definition lines
+                match = re.match(r'(\S+)/(\d+) \((.*?)\)', line)
+                if match:
+                    current_func_id = f"{match.group(1)}/{match.group(2)}"
+                    func_name = match.group(3)
+                    functions[current_func_id] = {
+                        'name': func_name,
+                        'called_by': [],
+                        'calls': []
+                    }
+                    in_called_by = False
+                    in_calls = False
+                elif current_func_id and line.startswith("  "):  # Indented lines contain the details
+                    line = line.strip()
+
+                    if line.startswith("Called by:"):
+                        in_called_by = True
+                        in_calls = False
+                        called_by_text = line[len("Called by:"):].strip()
+                        if called_by_text:
+                            functions[current_func_id]['called_by'].extend(called_by_text.split())
+                    elif line.startswith("Calls:"):
+                        in_called_by = False
+                        in_calls = True
+                        calls_text = line[len("Calls:"):].strip()
+                        if calls_text:
+                            functions[current_func_id]['calls'].extend(calls_text.split())
+                    elif in_called_by and line:
+                        functions[current_func_id]['called_by'].extend(line.split())
+                    elif in_calls and line:
+                        functions[current_func_id]['calls'].extend(line.split())
+                elif not line.strip():
+                    # Empty line, ignore
+                    pass
+                else:
+                    # Line doesn't match expected patterns, reset state
+                    current_func_id = None
+                    in_called_by = False
+                    in_calls = False
+
+        return functions
+    except Exception as e:
+        print(f"Error parsing {filename}: {str(e)}")
+        return {}
+
+def consolidate_callgraphs(all_functions):
+    """Consolidate callgraph information from multiple files."""
+    # Create a mapping from function ID to function name
+    id_to_name = {}
+    for filename, functions in all_functions.items():
+        for func_id, func_info in functions.items():
+            id_to_name[func_id] = func_info['name']
+
+    # Create the consolidated callgraph
+    consolidated = {}
+    for filename, functions in all_functions.items():
+        for func_id, func_info in functions.items():
+            func_name = func_info['name']
+
+            if func_name not in consolidated:
+                consolidated[func_name] = {
+                    'called_by': set(),
+                    'calls': set()
+                }
+
+            # Add functions that call this function
+            for caller_id in func_info['called_by']:
+                if caller_id in id_to_name:
+                    consolidated[func_name]['called_by'].add(id_to_name[caller_id])
+
+            # Add functions that this function calls
+            for callee_id in func_info['calls']:
+                if callee_id in id_to_name:
+                    consolidated[func_name]['calls'].add(id_to_name[callee_id])
+
+    return consolidated
+
+def generate_dot_file(consolidated, output_file):
+    """Generate a .dot file from the consolidated callgraph."""
+    try:
+        with open(output_file, 'w') as f:
+            f.write('digraph CallGraph {\n')
+            f.write('    node [shape=box, fontname="Arial"];\n')
+
+            # Add nodes for all functions
+            for func_name in consolidated:
+                f.write(f'    "{func_name}" [label="{func_name}"];\n')
+
+            # Add edges for function calls
+            for caller_name, info in consolidated.items():
+                for callee_name in info['calls']:
+                    f.write(f'    "{caller_name}" -> "{callee_name}";\n')
+
+            f.write('}\n')
+        return True
+    except Exception as e:
+        print(f"Error generating dot file: {str(e)}")
+        return False
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Convert GCC .cgraph files to Graphviz .dot call graphs."
+    )
+    parser.add_argument(
+        "output",
+        help="Output .dot file"
+    )
+    parser.add_argument(
+        "inputs",
+        nargs='+',
+        help="Input .cgraph file(s)"
+    )
+    args = parser.parse_args()
+
+    output_file = args.output
+    input_files = args.inputs
+
+    print(f"Processing {len(input_files)} cgraph file(s)...")
+
+    all_functions = {}
+    for filename in input_files:
+        functions = parse_cgraph_file(filename)
+        if functions:
+            all_functions[filename] = functions
+            print(f"Parsed {len(functions)} functions from {filename}")
+
+    if not all_functions:
+        print("No functions were extracted from the input files.")
+        sys.exit(1)
+
+    consolidated = consolidate_callgraphs(all_functions)
+    print(f"Consolidated to {len(consolidated)} unique functions")
+
+    if generate_dot_file(consolidated, output_file):
+        print(f"Generated call graph in {output_file}")
+        print(f"You can visualize it with: dot -Tpng {output_file} -o callgraph.png")
+    else:
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
