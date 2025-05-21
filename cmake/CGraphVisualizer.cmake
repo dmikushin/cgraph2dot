@@ -13,31 +13,12 @@ get_filename_component(_CGRAPH_VISUALIZER_DIR "${CMAKE_CURRENT_LIST_FILE}" DIREC
 # Function to find the cgraph2dot script
 function(_cgraph_find_script RESULT_VAR)
   # First, check if the script is in the same directory as this module
-  set(SCRIPT_PATH "${_CGRAPH_VISUALIZER_DIR}/cgraph2dot")
+  set(SCRIPT_PATH "${_CGRAPH_VISUALIZER_DIR}/../cgraph2dot")
   
   if(EXISTS "${SCRIPT_PATH}")
     set(${RESULT_VAR} "${SCRIPT_PATH}" PARENT_SCOPE)
     return()
   endif()
-  
-  # Next, check if it's available in PATH
-  find_program(CGRAPH2DOT_PROGRAM cgraph2dot)
-  if(CGRAPH2DOT_PROGRAM)
-    set(${RESULT_VAR} "${CGRAPH2DOT_PROGRAM}" PARENT_SCOPE)
-    return()
-  endif()
-  
-  # If still not found, try common locations
-  foreach(DIR 
-          "${CMAKE_SOURCE_DIR}/scripts" 
-          "${CMAKE_SOURCE_DIR}/tools" 
-          "${CMAKE_SOURCE_DIR}/cmake" 
-          "${CMAKE_SOURCE_DIR}")
-    if(EXISTS "${DIR}/cgraph2dot")
-      set(${RESULT_VAR} "${DIR}/cgraph2dot" PARENT_SCOPE)
-      return()
-    endif()
-  endforeach()
   
   # Not found
   set(${RESULT_VAR} "" PARENT_SCOPE)
