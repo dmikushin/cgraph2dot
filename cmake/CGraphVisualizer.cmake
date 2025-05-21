@@ -32,8 +32,8 @@ function(add_callgraph_visualization TARGET)
   endif()
   
   # Only support GCC and Clang compilers
-  if(NOT (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang"))
-    message(WARNING "Callgraph visualization is only supported with GCC and Clang compilers. Target: ${TARGET}")
+  if(NOT (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" OR CMAKE_Fortran_COMPILER_ID MATCHES "GNU|Clang"))
+    message(FATAL_ERROR "Callgraph visualization is only supported with GCC and Clang compilers. Target: ${TARGET}")
     return()
   endif()
   
