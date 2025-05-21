@@ -33,7 +33,7 @@ def parse_cgraph_file(filename):
                 match = re.match(r'(\S+)/(\d+) \((.*?)\)', line)
                 if match:
                     current_func_id = f"{match.group(1)}/{match.group(2)}"
-                    func_name = match.group(3)
+                    func_name = match.group(1)  # Use the fully decorated symbol name
                     functions[current_func_id] = {
                         'name': func_name,
                         'called_by': [],
