@@ -120,14 +120,20 @@ function(add_callgraph_image TARGET FORMAT)
   # Add a custom command to generate an image from the DOT file
   set(DOT_FILE "${CMAKE_CURRENT_BINARY_DIR}/${TARGET}.dot")
   set(IMAGE_FILE "${CMAKE_CURRENT_BINARY_DIR}/${TARGET}.${FORMAT}")
-  
+
   add_custom_command(
-    TARGET ${TARGET} POST_BUILD
+    OUTPUT ${IMAGE_FILE}
     COMMAND ${DOT_EXECUTABLE} -T${FORMAT} ${DOT_FILE} -o ${IMAGE_FILE}
     DEPENDS ${DOT_FILE}
     COMMENT "Generating ${FORMAT} image of callgraph for ${TARGET}"
     VERBATIM
   )
-  
+
+  add_custom_target(${TARGET}_callgraph_image ALL
+    DEPENDS ${IMAGE_FILE}
+  )
+
+  add_dependencies(${TARGET}_callgraph_image ${TARGET})
+
   message(STATUS "Callgraph ${FORMAT} image will be generated: ${IMAGE_FILE}")
 endfunction()
