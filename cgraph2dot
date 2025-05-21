@@ -113,14 +113,21 @@ def generate_dot_file(consolidated, output_file):
             f.write('digraph CallGraph {\n')
             f.write('    node [shape=box, fontname="Arial"];\n')
 
-            # Add nodes for all functions
-            for func_name in consolidated:
+            # Only include nodes that have at least one call or are called by someone
+            active_funcs = {name for name, info in consolidated.items() if info['calls'] or info['called_by']}
+            print(f"Generating .dot nodes for {len(active_funcs)} active functions")
+
+            # Add nodes for all active functions
+            for func_name in active_funcs:
                 f.write(f'    "{func_name}" [label="{func_name}"];\n')
 
             # Add edges for function calls
             for caller_name, info in consolidated.items():
+                if caller_name not in active_funcs:
+                    continue
                 for callee_name in info['calls']:
-                    f.write(f'    "{caller_name}" -> "{callee_name}";\n')
+                    if callee_name in active_funcs:
+                        f.write(f'    "{caller_name}" -> "{callee_name}";\n')
 
             f.write('}\n')
         return True
