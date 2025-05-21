@@ -7,14 +7,11 @@ if(DEFINED _CGRAPH_VISUALIZER_INCLUDED)
 endif()
 set(_CGRAPH_VISUALIZER_INCLUDED TRUE)
 
-# Get the directory where this module is located
-get_filename_component(_CGRAPH_VISUALIZER_DIR "${CMAKE_CURRENT_LIST_FILE}" DIRECTORY)
-
 # Function to find the cgraph2dot script
 function(_cgraph_find_script RESULT_VAR)
   # First, check if the script is in the same directory as this module
-  set(SCRIPT_PATH "${_CGRAPH_VISUALIZER_DIR}/../cgraph2dot")
-  
+  set(SCRIPT_PATH "${_CGRAPH_VISUALIZER_DIR}/cgraph2dot")
+
   if(EXISTS "${SCRIPT_PATH}")
     set(${RESULT_VAR} "${SCRIPT_PATH}" PARENT_SCOPE)
     return()
@@ -50,7 +47,7 @@ function(add_callgraph_visualization TARGET)
   target_compile_options(${TARGET} PRIVATE -fdump-ipa-cgraph)
   
   # Locate FindCGraphs.cmake
-  set(FIND_CGRAPHS_SCRIPT "${_CGRAPH_VISUALIZER_DIR}/FindCGraphs.cmake")
+  set(FIND_CGRAPHS_SCRIPT "${_CGRAPH_VISUALIZER_DIR}/cmake/FindCGraphs.cmake")
     
   # Handle multi-config generators (like Visual Studio)
   if(CMAKE_CONFIGURATION_TYPES)
