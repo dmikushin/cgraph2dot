@@ -2,7 +2,6 @@
 
 # Find all .cgraph files in the build directory
 set(SEARCH_DIRS
-  "${BUILD_DIR}"
   "${BUILD_DIR}/CMakeFiles/${TARGET}.dir"
 )
 
