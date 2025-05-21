@@ -1,0 +1,2 @@
+add_subdirectory(c_example)
+add_subdirectory(fortran_example)

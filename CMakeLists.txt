@@ -10,5 +10,5 @@ set(_CGRAPH_VISUALIZER_DIR "${CMAKE_CURRENT_SOURCE_DIR}" CACHE INTERNAL "CGraph 
 # Include the CGraphVisualizer module
 include(CGraphVisualizer)
 
-add_subdirectory(example)
+add_subdirectory(examples)
 

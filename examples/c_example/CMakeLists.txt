@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 
-project(cgraph2dot_example LANGUAGES C)
+project(cgraph2dot_c_example LANGUAGES C)
 
 # Create an executable target
 add_executable(${PROJECT_NAME} main.c util.c)

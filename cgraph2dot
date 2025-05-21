@@ -1,24 +1,64 @@
 #!/usr/bin/env python3
 
 import argparse
+import glob
+import os
 import re
 import sys
+import json
 from collections import defaultdict
+from typing import Dict, List, Set, Optional, TypedDict, Pattern, cast
 
-def parse_cgraph_file(filename):
+# Define types for better readability and static analysis
+class FunctionInfo(TypedDict):
+    name: str
+    called_by: List[str]
+    calls: List[str]
+
+FunctionsDict = Dict[str, FunctionInfo] # Key is function ID (e.g., "name/number")
+
+class ConsolidatedFunctionInfo(TypedDict):
+    calls: Set[str]
+    called_by: Set[str]
+
+ConsolidatedFunctions = Dict[str, ConsolidatedFunctionInfo] # Key is function name
+
+class RewriteRule(TypedDict):
+    pattern: str
+    replacement: str
+
+class FilterConfig(TypedDict, total=False):
+    """
+    Defines the structure of the filter JSON file.
+    'removal-filters' and 'keep-filters' are lists of regex patterns (strings).
+    'rewrite-filters' is a list of objects, each with a 'pattern' and 'replacement' string.
+    """
+    removal_filters: List[str]
+    keep_filters: List[str]
+    rewrite_filters: List[RewriteRule]
+
+# Factory for defaultdict for ConsolidatedFunctions
+def create_consolidated_function_info_factory() -> ConsolidatedFunctionInfo:
+    return {'calls': set(), 'called_by': set()}
+
+# Helper to create ConsolidatedFunctionInfo
+def make_consolidated_function_info(calls: Set[str], called_by: Set[str]) -> ConsolidatedFunctionInfo:
+    return {'calls': calls, 'called_by': called_by}
+
+
+def parse_cgraph_file(filename: str) -> FunctionsDict:
     """Parse a .cgraph file and extract function names and call relationships."""
-    functions = {}
-    current_func_id = None
-    in_called_by = False
-    in_calls = False
-    in_symbol_table = False
+    functions: FunctionsDict = {}
+    current_func_id: Optional[str] = None
+    in_called_by: bool = False
+    in_calls: bool = False
+    in_symbol_table: bool = False
 
     try:
         with open(filename, 'r') as f:
             for line in f:
                 line = line.rstrip()
 
-                # Identify the symbol table section
                 if line.strip() == "Initial Symbol table:":
                     in_symbol_table = True
                     continue
@@ -29,21 +69,15 @@ def parse_cgraph_file(filename):
                 if not in_symbol_table:
                     continue
 
-                # Match function definition lines
                 match = re.match(r'(\S+)/(\d+) \((.*?)\)', line)
                 if match:
                     current_func_id = f"{match.group(1)}/{match.group(2)}"
-                    func_name = match.group(1)  # Use the fully decorated symbol name
-                    functions[current_func_id] = {
-                        'name': func_name,
-                        'called_by': [],
-                        'calls': []
-                    }
+                    func_name = match.group(1)
+                    functions[current_func_id] = FunctionInfo(name=func_name, called_by=[], calls=[])
                     in_called_by = False
                     in_calls = False
-                elif current_func_id and line.startswith("  "):  # Indented lines contain the details
+                elif current_func_id and line.startswith("  "):
                     line = line.strip()
-
                     if line.startswith("Called by:"):
                         in_called_by = True
                         in_calls = False
@@ -61,73 +95,149 @@ def parse_cgraph_file(filename):
                     elif in_calls and line:
                         functions[current_func_id]['calls'].extend(line.split())
                 elif not line.strip():
-                    # Empty line, ignore
                     pass
                 else:
-                    # Line doesn't match expected patterns, reset state
                     current_func_id = None
                     in_called_by = False
                     in_calls = False
-
         return functions
     except Exception as e:
         print(f"Error parsing {filename}: {str(e)}")
         return {}
 
-def consolidate_callgraphs(all_functions):
+def consolidate_callgraphs(all_functions: Dict[str, FunctionsDict]) -> ConsolidatedFunctions:
     """Consolidate callgraph information from multiple files."""
-    # Create a mapping from function ID to function name
-    id_to_name = {}
-    for filename, functions in all_functions.items():
-        for func_id, func_info in functions.items():
+    id_to_name: Dict[str, str] = {}
+    for _, functions_in_file in all_functions.items():
+        for func_id, func_info in functions_in_file.items():
             id_to_name[func_id] = func_info['name']
 
-    # Create the consolidated callgraph
-    consolidated = {}
-    for filename, functions in all_functions.items():
-        for func_id, func_info in functions.items():
+    consolidated: ConsolidatedFunctions = defaultdict(create_consolidated_function_info_factory)
+    for _, functions_in_file in all_functions.items():
+        for func_id, func_info in functions_in_file.items():
             func_name = func_info['name']
-
-            if func_name not in consolidated:
-                consolidated[func_name] = {
-                    'called_by': set(),
-                    'calls': set()
-                }
-
-            # Add functions that call this function
+            
             for caller_id in func_info['called_by']:
                 if caller_id in id_to_name:
                     consolidated[func_name]['called_by'].add(id_to_name[caller_id])
 
-            # Add functions that this function calls
             for callee_id in func_info['calls']:
                 if callee_id in id_to_name:
                     consolidated[func_name]['calls'].add(id_to_name[callee_id])
+    return dict(consolidated)
 
-    return consolidated
 
-def generate_dot_file(consolidated, output_file):
-    """Generate a .dot file from the consolidated callgraph."""
+def apply_filters(functions: ConsolidatedFunctions, filter_config: FilterConfig) -> ConsolidatedFunctions:
+    """Apply filters to the list of functions based on the filter_config."""
+    if not filter_config:
+        return functions
+
+    processed_functions: ConsolidatedFunctions = {
+        name: make_consolidated_function_info(
+            calls=info['calls'].copy(),
+            called_by=info['called_by'].copy()
+        )
+        for name, info in functions.items()
+    }
+    
+    original_to_rewritten_names: Dict[str, str] = {name: name for name in processed_functions.keys()}
+
+    # 1. Apply rewrite filters
+    rewrite_rules = filter_config.get('rewrite_filters', [])
+    if rewrite_rules:
+        # First, determine all name changes
+        for original_name in list(original_to_rewritten_names.keys()): # Iterate over copy of keys
+            current_name_being_rewritten = original_name
+            for rule in rewrite_rules:
+                pattern_str = rule['pattern'] # Direct access as RewriteRule guarantees it
+                replacement_str = rule['replacement'] # Direct access
+                if pattern_str: # Only apply if pattern is not empty
+                    try:
+                        compiled_pattern: Pattern[str] = re.compile(pattern_str)
+                        current_name_being_rewritten = compiled_pattern.sub(replacement_str, current_name_being_rewritten)
+                    except re.error as e:
+                        print(f"Warning: Invalid regex pattern '{pattern_str}' in rewrite_filters: {e}")
+                        continue 
+            original_to_rewritten_names[original_name] = current_name_being_rewritten
+        
+        # Rebuild processed_functions with rewritten names and merge if necessary
+        merged_functions: ConsolidatedFunctions = defaultdict(create_consolidated_function_info_factory)
+        for original_name, info in processed_functions.items():
+            final_rewritten_name = original_to_rewritten_names[original_name]
+            
+            rewritten_calls = {original_to_rewritten_names.get(call, call) for call in info['calls']}
+            merged_functions[final_rewritten_name]['calls'].update(rewritten_calls)
+            
+            rewritten_called_by = {original_to_rewritten_names.get(caller, caller) for caller in info['called_by']}
+            merged_functions[final_rewritten_name]['called_by'].update(rewritten_called_by)
+        processed_functions = dict(merged_functions)
+
+
+    # 2. Apply keep filters
+    keep_patterns_str = filter_config.get('keep_filters')
+    if keep_patterns_str is not None: # Check if the key exists, even if list is empty
+        kept_functions: ConsolidatedFunctions = {}
+        compiled_keep_patterns: List[Pattern[str]] = []
+        for p_str in keep_patterns_str:
+            try:
+                compiled_keep_patterns.append(re.compile(p_str))
+            except re.error as e:
+                print(f"Warning: Invalid regex pattern '{p_str}' in keep_filters: {e}")
+        
+        if compiled_keep_patterns or not keep_patterns_str: # Filter if patterns exist, or if list is empty (keep nothing)
+            for func_name, func_info in processed_functions.items():
+                if any(pattern.search(func_name) for pattern in compiled_keep_patterns):
+                    kept_functions[func_name] = func_info
+            processed_functions = kept_functions
+        elif not compiled_keep_patterns and keep_patterns_str: # Non-empty list, but all patterns invalid
+             print("Warning: All keep_filter patterns were invalid. No functions kept by keep_filters.")
+             processed_functions = {} # Keep nothing
+
+
+    # 3. Apply removal filters
+    removal_patterns_str = filter_config.get('removal_filters')
+    if removal_patterns_str: # Only process if there are removal patterns
+        final_functions: ConsolidatedFunctions = {}
+        compiled_removal_patterns: List[Pattern[str]] = []
+        for p_str in removal_patterns_str:
+            try:
+                compiled_removal_patterns.append(re.compile(p_str))
+            except re.error as e:
+                print(f"Warning: Invalid regex pattern '{p_str}' in removal_filters: {e}")
+
+        if compiled_removal_patterns: 
+            for func_name, func_info in processed_functions.items():
+                if not any(pattern.search(func_name) for pattern in compiled_removal_patterns):
+                    final_functions[func_name] = func_info
+            processed_functions = final_functions
+        elif not compiled_removal_patterns and removal_patterns_str : # Non-empty list, but all patterns invalid
+            print("Warning: All removal_filter patterns were invalid. No removal filtering applied based on these patterns.")
+
+
+    # Final pass to ensure calls and called_by sets only contain functions that still exist
+    final_set_of_function_names = set(processed_functions.keys())
+    output_functions: ConsolidatedFunctions = {}
+    for func_name, func_info in processed_functions.items():
+        valid_calls = {call for call in func_info['calls'] if call in final_set_of_function_names}
+        valid_called_by = {caller for caller in func_info['called_by'] if caller in final_set_of_function_names}
+        output_functions[func_name] = make_consolidated_function_info(valid_calls, valid_called_by)
+        
+    return output_functions
+
+
+def generate_dot_file(functions_to_draw: ConsolidatedFunctions, output_file_path: str) -> bool:
+    """Generate a .dot file from the (filtered) callgraph."""
     try:
-        with open(output_file, 'w') as f:
+        with open(output_file_path, 'w') as f:
             f.write('digraph CallGraph {\n')
             f.write('    node [shape=box, fontname="Arial"];\n')
 
-            # Only include nodes that have at least one call or are called by someone
-            active_funcs = {name for name, info in consolidated.items() if info['calls'] or info['called_by']}
-            print(f"Generating .dot nodes for {len(active_funcs)} active functions")
-
-            # Add nodes for all active functions
-            for func_name in active_funcs:
+            for func_name in functions_to_draw.keys():
                 f.write(f'    "{func_name}" [label="{func_name}"];\n')
 
-            # Add edges for function calls
-            for caller_name, info in consolidated.items():
-                if caller_name not in active_funcs:
-                    continue
-                for callee_name in info['calls']:
-                    if callee_name in active_funcs:
-                        f.write(f'    "{caller_name}" -> "{callee_name}";\n')
+            for caller_name, info in functions_to_draw.items():
+                for callee_name in info.get('calls', set()): 
+                    f.write(f'    "{caller_name}" -> "{callee_name}";\n')
 
             f.write('}\n')
         return True
@@ -135,7 +245,7 @@ def generate_dot_file(consolidated, output_file):
         print(f"Error generating dot file: {str(e)}")
         return False
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Convert GCC .cgraph files to Graphviz .dot call graphs."
     )
@@ -148,31 +258,111 @@ def main():
         nargs='+',
         help="Input .cgraph file(s)"
     )
+    parser.add_argument(
+        "--filters",
+        help="Optional JSON file with filter configurations for symbols. "
+             "Keys: 'removal-filters' (list of regex strings), "
+             "'keep-filters' (list of regex strings), "
+             "'rewrite-filters' (list of {'pattern': regex_string, 'replacement': string}).",
+        default=None,
+        type=str
+    )
     args = parser.parse_args()
 
-    output_file = args.output
-    input_files = args.inputs
+    output_file: str = args.output
+    input_files: List[str] = args.inputs
+    filter_file_path: Optional[str] = args.filters
+
+    filter_config: FilterConfig = {} # Initialize as an empty dict, TypedDict total=False allows this
+    if filter_file_path:
+        try:
+            with open(filter_file_path, 'r') as f:
+                loaded_json = json.load(f)
+                if not isinstance(loaded_json, dict):
+                    print(f"Warning: Filter JSON content is not a dictionary. File: {filter_file_path}. Proceeding without filters.")
+                    loaded_json = {} # Treat as empty config
+
+                raw_removal_filters = loaded_json.get('removal-filters')
+                if isinstance(raw_removal_filters, list) and all(isinstance(item, str) for item in raw_removal_filters):
+                    filter_config['removal_filters'] = raw_removal_filters
+                elif raw_removal_filters is not None:
+                    print(f"Warning: 'removal-filters' in {filter_file_path} is not a list of strings. Ignoring.")
+
+                raw_keep_filters = loaded_json.get('keep-filters')
+                if isinstance(raw_keep_filters, list) and all(isinstance(item, str) for item in raw_keep_filters):
+                    filter_config['keep_filters'] = raw_keep_filters
+                elif raw_keep_filters is not None:
+                    print(f"Warning: 'keep-filters' in {filter_file_path} is not a list of strings. Ignoring.")
+                
+                raw_rewrite_filters = loaded_json.get('rewrite-filters')
+                if isinstance(raw_rewrite_filters, list):
+                    valid_rewrite_rules: List[RewriteRule] = []
+                    for rule_data in raw_rewrite_filters:
+                        if isinstance(rule_data, dict) and \
+                           isinstance(rule_data.get('pattern'), str) and \
+                           isinstance(rule_data.get('replacement'), str):
+                            valid_rewrite_rules.append(
+                                RewriteRule(pattern=rule_data['pattern'], replacement=rule_data['replacement'])
+                            )
+                        else:
+                            print(f"Warning: Invalid rewrite rule structure or types in {filter_file_path}: {rule_data}. Ignoring rule.")
+                    if valid_rewrite_rules:
+                        filter_config['rewrite_filters'] = valid_rewrite_rules
+                elif raw_rewrite_filters is not None:
+                     print(f"Warning: 'rewrite-filters' in {filter_file_path} is not a list of rule objects. Ignoring.")
+
+            if filter_config: # Check if any filters were actually loaded
+                 print(f"Successfully loaded filter configuration from {filter_file_path}")
+            else:
+                 print(f"No valid filters found in {filter_file_path} or file was empty/malformed. Proceeding without filters.")
+
+        except FileNotFoundError:
+            print(f"Error: Filter JSON file not found at {filter_file_path}. Proceeding without filters.")
+        except json.JSONDecodeError as e:
+            print(f"Error decoding filter JSON file {filter_file_path}: {e}. Proceeding without filters.")
+        except Exception as e: 
+            print(f"An unexpected error occurred while loading/processing filter JSON file {filter_file_path}: {e}. Proceeding without filters.")
+
+    # Preprocess input files: lookup for basename.*.cgraph files
+    processed_input_files: List[str] = []
+    for fname in input_files:
+        base, _ = os.path.splitext(fname)
+        matched = sorted(glob.glob(f"{base}.*.cgraph"))
+        if matched:
+            processed_input_files.extend(matched)
+        else:
+            print(f"Warning: No files matched {base}.*.cgraph, skipping.")
 
     print(f"Processing {len(input_files)} cgraph file(s)...")
 
-    all_functions = {}
-    for filename in input_files:
-        functions = parse_cgraph_file(filename)
-        if functions:
-            all_functions[filename] = functions
-            print(f"Parsed {len(functions)} functions from {filename}")
+    all_parsed_functions: Dict[str, FunctionsDict] = {}
+    for filename_cgraph in processed_input_files:
+        functions_from_file = parse_cgraph_file(filename_cgraph)
+        if functions_from_file:
+            all_parsed_functions[filename_cgraph] = functions_from_file
+            print(f"Parsed {len(functions_from_file)} functions from {filename_cgraph}")
 
-    if not all_functions:
+    if not all_parsed_functions:
         print("No functions were extracted from the input files.")
         sys.exit(1)
 
-    consolidated = consolidate_callgraphs(all_functions)
-    print(f"Consolidated to {len(consolidated)} unique functions")
+    consolidated_functions = consolidate_callgraphs(all_parsed_functions)
+    print(f"Consolidated to {len(consolidated_functions)} unique functions before filtering.")
 
-    if generate_dot_file(consolidated, output_file):
+    functions_to_draw = consolidated_functions
+    if filter_config: # Only apply if filter_config is not empty
+        print("Applying filters...")
+        functions_to_draw = apply_filters(consolidated_functions, filter_config)
+        print(f"After filtering, {len(functions_to_draw)} functions remain to be drawn.")
+    else:
+        print("No filter configuration provided or loaded. Proceeding with all consolidated functions.")
+
+
+    if generate_dot_file(functions_to_draw, output_file):
         print(f"Generated call graph in {output_file}")
         print(f"You can visualize it with: dot -Tpng {output_file} -o callgraph.png")
     else:
+        print(f"Failed to generate call graph in {output_file}")
         sys.exit(1)
 
 if __name__ == "__main__":

@@ -23,6 +23,12 @@ endfunction()
 
 # Main function to attach callgraph visualization to a target
 function(add_callgraph_visualization TARGET)
+  # Parse arguments
+  set(options)
+  set(oneValueArgs FILTER_FILE)
+  set(multiValueArgs)
+  cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
   # Check if the target exists
   if(NOT TARGET ${TARGET})
     message(FATAL_ERROR "Target '${TARGET}' does not exist")
@@ -39,52 +45,58 @@ function(add_callgraph_visualization TARGET)
   if(NOT CGRAPH2DOT_SCRIPT)
     message(FATAL_ERROR "Could not find cgraph2dot script. Please place it in the same directory as CGraphVisualizer.cmake, in PATH, or in the project's source directory.")
   endif()
-  
+
   # Ensure Python is available
   find_package(Python COMPONENTS Interpreter REQUIRED)
-  
+
   # Add the compiler option to generate .cgraph files
   target_compile_options(${TARGET} PRIVATE -fdump-ipa-cgraph)
-  
-  # Locate FindCGraphs.cmake
-  set(FIND_CGRAPHS_SCRIPT "${_CGRAPH_VISUALIZER_DIR}/cmake/FindCGraphs.cmake")
-    
+
+  set(CGRAPH_FILTER_FILE_ARG)
+  set(CGRAPH2DOT_EXTRA_ARGS "")
+  if(ARG_FILTER_FILE)
+    if(EXISTS "${ARG_FILTER_FILE}")
+      set(CGRAPH_FILTER_FILE_ARG -D CGRAPH_FILTER_FILE=${ARG_FILTER_FILE})
+      list(APPEND CGRAPH2DOT_EXTRA_ARGS --filters "${ARG_FILTER_FILE}")
+      message(STATUS "Using filter file for ${TARGET}: ${ARG_FILTER_FILE}")
+    else()
+      message(WARNING "Filter file specified for ${TARGET} but not found: ${ARG_FILTER_FILE}")
+    endif()
+  endif()
+
   # Handle multi-config generators (like Visual Studio)
   if(CMAKE_CONFIGURATION_TYPES)
     foreach(CONFIG ${CMAKE_CONFIGURATION_TYPES})
+      set(OUTPUT_DOT "${CMAKE_CURRENT_BINARY_DIR}/${TARGET}_${CONFIG}.dot")
       add_custom_command(
-        TARGET ${TARGET} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E echo "Generating callgraph for ${TARGET} (${CONFIG})..."
-        COMMAND ${CMAKE_COMMAND}
-          -D TARGET=${TARGET}
-          -D BUILD_DIR=${CMAKE_BINARY_DIR}
-          -D CONFIG=${CONFIG}
-          -D CGRAPH2DOT_SCRIPT=${CGRAPH2DOT_SCRIPT}
-          -D PYTHON_EXECUTABLE=${Python_EXECUTABLE}
-          -D OUTPUT_DOT=${CMAKE_CURRENT_BINARY_DIR}/${TARGET}_${CONFIG}.dot
-          -P ${FIND_CGRAPHS_SCRIPT}
+        OUTPUT "${OUTPUT_DOT}"
+        COMMAND "${Python_EXECUTABLE}" "${CGRAPH2DOT_SCRIPT}" "${OUTPUT_DOT}" $<TARGET_OBJECTS:${TARGET}> ${CGRAPH2DOT_EXTRA_ARGS}
+        DEPENDS $<TARGET_OBJECTS:${TARGET}>
+        COMMENT "Generating callgraph for ${TARGET} (${CONFIG})..."
+        COMMAND_EXPAND_LISTS
         VERBATIM
       )
+      add_custom_target(generate_callgraph_${TARGET}_${CONFIG} ALL DEPENDS "${OUTPUT_DOT}")
+      add_dependencies(generate_callgraph_${TARGET}_${CONFIG} ${TARGET})
     endforeach()
   else()
-    # Single-config generator
+    set(OUTPUT_DOT "${CMAKE_CURRENT_BINARY_DIR}/${TARGET}.dot")
     add_custom_command(
-      TARGET ${TARGET} POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E echo "Generating callgraph for ${TARGET}..."
-      COMMAND ${CMAKE_COMMAND}
-        -D TARGET=${TARGET}
-        -D BUILD_DIR=${CMAKE_BINARY_DIR}
-        -D CGRAPH2DOT_SCRIPT=${CGRAPH2DOT_SCRIPT}
-        -D PYTHON_EXECUTABLE=${Python_EXECUTABLE}
-        -D OUTPUT_DOT=${CMAKE_CURRENT_BINARY_DIR}/${TARGET}.dot
-        -P ${FIND_CGRAPHS_SCRIPT}
+      OUTPUT "${OUTPUT_DOT}"
+      COMMAND "${Python_EXECUTABLE}" "${CGRAPH2DOT_SCRIPT}" "${OUTPUT_DOT}" $<TARGET_OBJECTS:${TARGET}> ${CGRAPH2DOT_EXTRA_ARGS}
+      DEPENDS $<TARGET_OBJECTS:${TARGET}>
+      COMMENT "Generating callgraph for ${TARGET}..."
+      COMMAND_EXPAND_LISTS
       VERBATIM
     )
+    add_custom_target(generate_callgraph_${TARGET} ALL DEPENDS "${OUTPUT_DOT}")
+    add_dependencies(generate_callgraph_${TARGET} ${TARGET})
   endif()
-  
+
   message(STATUS "Callgraph visualization enabled for target: ${TARGET}")
   message(STATUS "The DOT file will be generated after building the target")
 endfunction()
+
 
 # Optional function to add visualization using Graphviz
 function(add_callgraph_image TARGET FORMAT)

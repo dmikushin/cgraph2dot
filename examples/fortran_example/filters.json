@@ -1,0 +1,9 @@
+{
+  "removal-filters": [ "^_gfortran.*" ],
+  "rewrite-filters": [
+    {
+      "pattern": "^__my_module_MOD_",
+      "replacement": "my_module::"
+    }
+  ]
+}
