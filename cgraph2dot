@@ -46,13 +46,17 @@ def make_consolidated_function_info(calls: Set[str], called_by: Set[str]) -> Con
     return {'calls': calls, 'called_by': called_by}
 
 
-def parse_cgraph_file(filename: str) -> FunctionsDict:
+def parse_cgraph_file(filename: str, global_short_to_full_map: Optional[Dict[str, str]] = None) -> FunctionsDict:
     """Parse a .cgraph file and extract function names and call relationships."""
     functions: FunctionsDict = {}
     current_func_id: Optional[str] = None
+    current_func_name: Optional[str] = None
     in_called_by: bool = False
     in_calls: bool = False
     in_symbol_table: bool = False
+    
+    # Map of short names to full names (for handling different GCC versions)
+    short_to_full_name: Dict[str, str] = global_short_to_full_map if global_short_to_full_map else {}
 
     try:
         with open(filename, 'r') as f:
@@ -69,41 +73,123 @@ def parse_cgraph_file(filename: str) -> FunctionsDict:
                 if not in_symbol_table:
                     continue
 
+                # Match function definition lines
+                # Pattern handles both old and new GCC formats
                 match = re.match(r'(\S+)/(\d+) \((.*?)\)', line)
                 if match:
-                    current_func_id = f"{match.group(1)}/{match.group(2)}"
-                    func_name = match.group(1)
-                    functions[current_func_id] = FunctionInfo(name=func_name, called_by=[], calls=[])
+                    full_name = match.group(1)
+                    func_number = match.group(2)
+                    short_name = match.group(3)
+                    
+                    current_func_id = f"{full_name}/{func_number}"
+                    current_func_name = full_name
+                    
+                    # Store mapping from short name to full name
+                    if short_name and short_name != full_name:
+                        short_to_full_name[short_name] = full_name
+                        short_to_full_name[f"{short_name}/{func_number}"] = current_func_id
+                    
+                    functions[current_func_id] = FunctionInfo(name=full_name, called_by=[], calls=[])
                     in_called_by = False
                     in_calls = False
                 elif current_func_id and line.startswith("  "):
                     line = line.strip()
+                    
+                    # Skip "First run:" lines (present in older GCC versions)
+                    if line.startswith("First run:"):
+                        continue
+                    
                     if line.startswith("Called by:"):
                         in_called_by = True
                         in_calls = False
                         called_by_text = line[len("Called by:"):].strip()
                         if called_by_text:
-                            functions[current_func_id]['called_by'].extend(called_by_text.split())
+                            # Process function references
+                            refs = called_by_text.split()
+                            normalized_refs = normalize_function_references(refs, short_to_full_name)
+                            functions[current_func_id]['called_by'].extend(normalized_refs)
                     elif line.startswith("Calls:"):
                         in_called_by = False
                         in_calls = True
                         calls_text = line[len("Calls:"):].strip()
                         if calls_text:
-                            functions[current_func_id]['calls'].extend(calls_text.split())
+                            # Process function references
+                            refs = calls_text.split()
+                            normalized_refs = normalize_function_references(refs, short_to_full_name)
+                            functions[current_func_id]['calls'].extend(normalized_refs)
                     elif in_called_by and line:
-                        functions[current_func_id]['called_by'].extend(line.split())
+                        # Process function references
+                        refs = line.split()
+                        normalized_refs = normalize_function_references(refs, short_to_full_name)
+                        functions[current_func_id]['called_by'].extend(normalized_refs)
                     elif in_calls and line:
-                        functions[current_func_id]['calls'].extend(line.split())
+                        # Process function references
+                        refs = line.split()
+                        normalized_refs = normalize_function_references(refs, short_to_full_name)
+                        functions[current_func_id]['calls'].extend(normalized_refs)
                 elif not line.strip():
                     pass
                 else:
                     current_func_id = None
+                    current_func_name = None
                     in_called_by = False
                     in_calls = False
         return functions
     except Exception as e:
         print(f"Error parsing {filename}: {str(e)}")
         return {}
+
+def normalize_function_references(refs: List[str], short_to_full_map: Dict[str, str]) -> List[str]:
+    """Normalize function references to handle different GCC version formats.
+    
+    Older GCC versions might use short names (e.g., 'internal_helper/0')
+    while newer versions use full names (e.g., '__my_module_MOD_internal_helper/0').
+    This function ensures consistency by converting short names to full names when available.
+    """
+    normalized = []
+    for ref in refs:
+        # Check if this reference can be mapped to a full name
+        if ref in short_to_full_map:
+            normalized.append(short_to_full_map[ref])
+        else:
+            normalized.append(ref)
+    return normalized
+
+def build_name_mappings(filename: str, global_map: Dict[str, str]) -> None:
+    """Build a global mapping of short names to full names from a cgraph file.
+    
+    This is used to handle different GCC versions where older versions might
+    use short names in references while newer versions use full names.
+    """
+    in_symbol_table = False
+    
+    try:
+        with open(filename, 'r') as f:
+            for line in f:
+                line = line.rstrip()
+                
+                if line.strip() == "Initial Symbol table:":
+                    in_symbol_table = True
+                    continue
+                elif line.strip() == "Removing unused symbols:":
+                    break
+                    
+                if not in_symbol_table:
+                    continue
+                
+                # Match function definition lines
+                match = re.match(r'(\S+)/(\d+) \((.*?)\)', line)
+                if match:
+                    full_name = match.group(1)
+                    func_number = match.group(2)
+                    short_name = match.group(3)
+                    
+                    # Store mapping from short name to full name
+                    if short_name and short_name != full_name:
+                        global_map[short_name] = full_name
+                        global_map[f"{short_name}/{func_number}"] = f"{full_name}/{func_number}"
+    except Exception as e:
+        print(f"Warning: Error building name mappings from {filename}: {str(e)}")
 
 def consolidate_callgraphs(all_functions: Dict[str, FunctionsDict]) -> ConsolidatedFunctions:
     """Consolidate callgraph information from multiple files."""
@@ -323,21 +409,97 @@ def main() -> None:
         except Exception as e: 
             print(f"An unexpected error occurred while loading/processing filter JSON file {filter_file_path}: {e}. Proceeding without filters.")
 
-    # Preprocess input files: lookup for basename.*.cgraph files
+    # Preprocess input files: handle direct paths, patterns, and object files
     processed_input_files: List[str] = []
     for fname in input_files:
-        base, _ = os.path.splitext(fname)
-        matched = sorted(glob.glob(f"{base}.*.cgraph"))
-        if matched:
-            processed_input_files.extend(matched)
+        # Check if the file exists directly
+        if os.path.isfile(fname):
+            # Check if it's an object file (.o)
+            if fname.endswith('.o'):
+                # For object files, look for corresponding .cgraph files
+                obj_dir = os.path.dirname(fname)
+                obj_basename = os.path.basename(fname)
+                # Remove .o extension
+                source_base = obj_basename[:-2]
+                
+                # Look for .cgraph files with various patterns
+                # Pattern 1: source.ext.000i.cgraph (e.g., main.c.000i.cgraph)
+                # Pattern 2: source.ext.ext.000i.cgraph (e.g., main.c.c.000i.cgraph for newer GCC)
+                cgraph_patterns = [
+                    os.path.join(obj_dir, f"{source_base}.*.cgraph"),
+                    os.path.join(obj_dir, f"{source_base}.{source_base.split('.')[-1]}.*.cgraph") if '.' in source_base else None
+                ]
+                
+                cgraph_found = False
+                for pattern in cgraph_patterns:
+                    if pattern:
+                        matched = sorted(glob.glob(pattern))
+                        if matched:
+                            processed_input_files.extend(matched)
+                            cgraph_found = True
+                            break
+                
+                if not cgraph_found:
+                    print(f"Warning: No .cgraph files found for object file {fname}")
+            elif fname.endswith('.cgraph'):
+                # It's already a .cgraph file
+                processed_input_files.append(fname)
+            else:
+                # Unknown file type, try old behavior
+                base, _ = os.path.splitext(fname)
+                matched = sorted(glob.glob(f"{base}.*.cgraph"))
+                if matched:
+                    processed_input_files.extend(matched)
+                else:
+                    print(f"Warning: No .cgraph files found for {fname}")
         else:
-            print(f"Warning: No files matched {base}.*.cgraph, skipping.")
+            # Try to match it as a glob pattern
+            matched = sorted(glob.glob(fname))
+            if matched:
+                # Recursively process matched files
+                for matched_file in matched:
+                    if matched_file.endswith('.o'):
+                        # Handle object files
+                        obj_dir = os.path.dirname(matched_file)
+                        obj_basename = os.path.basename(matched_file)
+                        source_base = obj_basename[:-2]
+                        
+                        cgraph_patterns = [
+                            os.path.join(obj_dir, f"{source_base}.*.cgraph"),
+                            os.path.join(obj_dir, f"{source_base}.{source_base.split('.')[-1]}.*.cgraph") if '.' in source_base else None
+                        ]
+                        
+                        for pattern in cgraph_patterns:
+                            if pattern:
+                                cgraph_matched = sorted(glob.glob(pattern))
+                                if cgraph_matched:
+                                    processed_input_files.extend(cgraph_matched)
+                                    break
+                    elif matched_file.endswith('.cgraph'):
+                        processed_input_files.append(matched_file)
+            else:
+                print(f"Warning: No files matched {fname}, skipping.")
 
-    print(f"Processing {len(input_files)} cgraph file(s)...")
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_files = []
+    for f in processed_input_files:
+        if f not in seen:
+            seen.add(f)
+            unique_files.append(f)
+    processed_input_files = unique_files
 
+    print(f"Processing {len(processed_input_files)} cgraph file(s)...")
+
+    # First pass: build global short-to-full name mapping
+    global_short_to_full_map: Dict[str, str] = {}
+    for filename_cgraph in processed_input_files:
+        build_name_mappings(filename_cgraph, global_short_to_full_map)
+    
+    # Second pass: parse with global mapping
     all_parsed_functions: Dict[str, FunctionsDict] = {}
     for filename_cgraph in processed_input_files:
-        functions_from_file = parse_cgraph_file(filename_cgraph)
+        functions_from_file = parse_cgraph_file(filename_cgraph, global_short_to_full_map)
         if functions_from_file:
             all_parsed_functions[filename_cgraph] = functions_from_file
             print(f"Parsed {len(functions_from_file)} functions from {filename_cgraph}")
