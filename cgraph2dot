@@ -7,35 +7,18 @@ import re
 import sys
 import json
 from collections import defaultdict
-from typing import Dict, List, Set, Optional, TypedDict, Pattern, cast
+from typing import Dict, List, Set, Optional, Pattern, cast
 
 # Define types for better readability and static analysis
-class FunctionInfo(TypedDict):
-    name: str
-    called_by: List[str]
-    calls: List[str]
+# Using Dict instead of TypedDict for Python 3.6+ compatibility
+FunctionInfo = Dict[str, any]  # Keys: 'name' (str), 'called_by' (List[str]), 'calls' (List[str])
+FunctionsDict = Dict[str, FunctionInfo]  # Key is function ID (e.g., "name/number")
 
-FunctionsDict = Dict[str, FunctionInfo] # Key is function ID (e.g., "name/number")
+ConsolidatedFunctionInfo = Dict[str, any]  # Keys: 'calls' (Set[str]), 'called_by' (Set[str])
+ConsolidatedFunctions = Dict[str, ConsolidatedFunctionInfo]  # Key is function name
 
-class ConsolidatedFunctionInfo(TypedDict):
-    calls: Set[str]
-    called_by: Set[str]
-
-ConsolidatedFunctions = Dict[str, ConsolidatedFunctionInfo] # Key is function name
-
-class RewriteRule(TypedDict):
-    pattern: str
-    replacement: str
-
-class FilterConfig(TypedDict, total=False):
-    """
-    Defines the structure of the filter JSON file.
-    'removal-filters' and 'keep-filters' are lists of regex patterns (strings).
-    'rewrite-filters' is a list of objects, each with a 'pattern' and 'replacement' string.
-    """
-    removal_filters: List[str]
-    keep_filters: List[str]
-    rewrite_filters: List[RewriteRule]
+RewriteRule = Dict[str, str]  # Keys: 'pattern' (str), 'replacement' (str)
+FilterConfig = Dict[str, any]  # Keys: 'removal_filters' (List[str]), 'keep_filters' (List[str]), 'rewrite_filters' (List[RewriteRule])
 
 # Factory for defaultdict for ConsolidatedFunctions
 def create_consolidated_function_info_factory() -> ConsolidatedFunctionInfo:
@@ -44,6 +27,10 @@ def create_consolidated_function_info_factory() -> ConsolidatedFunctionInfo:
 # Helper to create ConsolidatedFunctionInfo
 def make_consolidated_function_info(calls: Set[str], called_by: Set[str]) -> ConsolidatedFunctionInfo:
     return {'calls': calls, 'called_by': called_by}
+
+# Helper to create FunctionInfo
+def make_function_info(name: str, called_by: List[str], calls: List[str]) -> FunctionInfo:
+    return {'name': name, 'called_by': called_by, 'calls': calls}
 
 
 def parse_cgraph_file(filename: str, global_short_to_full_map: Optional[Dict[str, str]] = None) -> FunctionsDict:
@@ -89,7 +76,7 @@ def parse_cgraph_file(filename: str, global_short_to_full_map: Optional[Dict[str
                         short_to_full_name[short_name] = full_name
                         short_to_full_name[f"{short_name}/{func_number}"] = current_func_id
                     
-                    functions[current_func_id] = FunctionInfo(name=full_name, called_by=[], calls=[])
+                    functions[current_func_id] = make_function_info(name=full_name, called_by=[], calls=[])
                     in_called_by = False
                     in_calls = False
                 elif current_func_id and line.startswith("  "):
@@ -359,7 +346,7 @@ def main() -> None:
     input_files: List[str] = args.inputs
     filter_file_path: Optional[str] = args.filters
 
-    filter_config: FilterConfig = {} # Initialize as an empty dict, TypedDict total=False allows this
+    filter_config: FilterConfig = {}  # Initialize as an empty dict
     if filter_file_path:
         try:
             with open(filter_file_path, 'r') as f:
@@ -388,7 +375,7 @@ def main() -> None:
                            isinstance(rule_data.get('pattern'), str) and \
                            isinstance(rule_data.get('replacement'), str):
                             valid_rewrite_rules.append(
-                                RewriteRule(pattern=rule_data['pattern'], replacement=rule_data['replacement'])
+                                {'pattern': rule_data['pattern'], 'replacement': rule_data['replacement']}
                             )
                         else:
                             print(f"Warning: Invalid rewrite rule structure or types in {filter_file_path}: {rule_data}. Ignoring rule.")
