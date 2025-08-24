@@ -1,0 +1,14 @@
+digraph CallGraph {
+    node [shape=box, fontname="Arial"];
+    "my_module::module_subroutine2" [label="my_module::module_subroutine2"];
+    "my_module::module_subroutine1" [label="my_module::module_subroutine1"];
+    "main" [label="main"];
+    "MAIN__" [label="MAIN__"];
+    "standalone_subroutine.0" [label="standalone_subroutine.0"];
+    "my_module::internal_helper" [label="my_module::internal_helper"];
+    "my_module::module_subroutine1" -> "my_module::internal_helper";
+    "main" -> "MAIN__";
+    "MAIN__" -> "my_module::module_subroutine2";
+    "MAIN__" -> "standalone_subroutine.0";
+    "MAIN__" -> "my_module::module_subroutine1";
+}

@@ -1,0 +1,62 @@
+name: GCC Compatibility Test
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  test-gcc-8:
+    name: Test with GCC 8 (Rocky Linux 8.8)
+    runs-on: ubuntu-latest
+    container: rockylinux:8.8
+    
+    steps:
+    - name: Install dependencies
+      run: |
+        dnf update -y
+        dnf groupinstall -y "Development Tools"
+        dnf install -y cmake gcc-gfortran python3 git
+    
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Show GCC version
+      run: gcc --version
+    
+    - name: Build examples
+      run: |
+        mkdir build
+        cd build
+        cmake ..
+        make
+    
+    - name: Run compatibility test
+      run: python3 tests/test_gcc_compatibility.py
+
+  test-gcc-11:
+    name: Test with GCC 11 (Ubuntu 22.04)
+    runs-on: ubuntu-22.04
+    
+    steps:
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential cmake gfortran python3
+    
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Show GCC version
+      run: gcc --version
+    
+    - name: Build examples
+      run: |
+        mkdir build
+        cd build
+        cmake ..
+        make
+    
+    - name: Run compatibility test
+      run: python3 tests/test_gcc_compatibility.py

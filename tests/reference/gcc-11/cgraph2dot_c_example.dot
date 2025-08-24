@@ -1,0 +1,33 @@
+digraph CallGraph {
+    node [shape=box, fontname="Arial"];
+    "puts" [label="puts"];
+    "complexCalculation" [label="complexCalculation"];
+    "factorial" [label="factorial"];
+    "divide" [label="divide"];
+    "multiply" [label="multiply"];
+    "subtract" [label="subtract"];
+    "add" [label="add"];
+    "printf" [label="printf"];
+    "main" [label="main"];
+    "run_calculations" [label="run_calculations"];
+    "display_result" [label="display_result"];
+    "helper_function" [label="helper_function"];
+    "complexCalculation" -> "factorial";
+    "complexCalculation" -> "multiply";
+    "complexCalculation" -> "subtract";
+    "complexCalculation" -> "add";
+    "complexCalculation" -> "divide";
+    "complexCalculation" -> "helper_function";
+    "factorial" -> "factorial";
+    "divide" -> "puts";
+    "main" -> "run_calculations";
+    "main" -> "puts";
+    "run_calculations" -> "display_result";
+    "run_calculations" -> "factorial";
+    "run_calculations" -> "multiply";
+    "run_calculations" -> "subtract";
+    "run_calculations" -> "add";
+    "run_calculations" -> "complexCalculation";
+    "run_calculations" -> "divide";
+    "display_result" -> "printf";
+}
