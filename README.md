@@ -4,7 +4,7 @@ A Python utility that converts GCC's callgraph dump files (.cgraph) to DOT forma
 
 `cgraph2dot` processes `.cgraph` files produced by GCC's `-fdump-ipa-cgraph` option, extracts callgraph information, consolidates it, applies optional filtering and rewriting rules, and generates a DOT file that can be visualized using Graphviz or other graph visualization tools.
 
-![](./examples/c_example/cgraph2dot_example.png)
+![](./examples/c_example/cgraph2dot_c_example.png)
 *C example call graph*
 
 ![](./examples/fortran_example/cgraph2dot_fortran_example.png)
