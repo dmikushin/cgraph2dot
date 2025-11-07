@@ -196,6 +196,42 @@ After building the `my_app` target, a `my_app.dot` file will be automatically ge
 
 ## Visualization Options
 
+### Interactive HTML Visualization (Recommended)
+
+The `dot2interactive.py` script converts DOT files into interactive HTML visualizations using vis.js:
+
+```bash
+python3 dot2interactive.py input.dot output.html --title "My Call Graph"
+```
+
+**Features:**
+- **Interactive zoom and pan** - Navigate large graphs easily with mouse
+- **Hierarchical layout** - Top-to-bottom organization for better readability
+- **Search functionality** - Find functions by name with highlighting
+- **Filter by type** - Show/hide system functions, modules, or user code
+- **Color coding** - Visual differentiation of function types
+- **Node collapse/expand** - Double-click nodes to collapse/expand children
+- **Auto-collapsing controls** - Control panel auto-hides after 3 seconds
+- **Export to PNG** - Save current view as image
+- **Responsive** - Works on any screen size
+- **No installation required** - Runs in any modern browser offline
+
+**Usage:**
+1. Generate DOT file using `cgraph2dot`
+2. Convert to interactive HTML: `python3 dot2interactive.py graph.dot graph.html`
+3. Open `graph.html` in any web browser (Chrome, Firefox, Safari, Edge)
+
+**Controls:**
+- Mouse wheel - Zoom in/out
+- Click and drag - Pan around
+- Search box - Type function name to find and highlight
+- Filter dropdown - Select viewing mode (All, User Functions, Module Functions, Hide System/Library)
+- Double-click node - Collapse/expand children (dashed border indicates collapsed state)
+- Fit to Screen - Reset zoom to show entire graph
+- Toggle Physics - Enable/disable force-directed layout animation
+- Export PNG - Save current view as image
+- Reset View - Restore all nodes and clear filters
+
 ### PNG Image
 
 ```bash
@@ -233,11 +269,22 @@ xdot callgraph.dot
 The project consists of the following files:
 
 - `cgraph2dot` - The main Python script that processes `.cgraph` files
+- `dot2interactive.py` - Python script that converts DOT files to interactive HTML
 - `CGraphVisualizer.cmake` - CMake module for integration with CMake build systems
 
 ### cgraph2dot
 
 This is the core Python script that does the actual work of parsing `.cgraph` files and generating the DOT output.
+
+### dot2interactive.py
+
+A Python script that converts static DOT files into interactive HTML visualizations using vis.js. It provides a rich interactive experience for exploring call graphs with features like:
+- Hierarchical layout with zoom/pan
+- Real-time search and filtering
+- Node collapse/expand on double-click
+- Auto-collapsing control panel
+- Export to PNG
+- No external dependencies (uses CDN for vis.js)
 
 ### CGraphVisualizer.cmake
 
