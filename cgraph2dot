@@ -41,7 +41,8 @@ def parse_cgraph_file(filename: str, global_short_to_full_map: Optional[Dict[str
     in_called_by: bool = False
     in_calls: bool = False
     in_symbol_table: bool = False
-    
+    in_function_block: bool = False
+
     # Map of short names to full names (for handling different GCC versions)
     short_to_full_name: Dict[str, str] = global_short_to_full_map if global_short_to_full_map else {}
 
@@ -67,60 +68,71 @@ def parse_cgraph_file(filename: str, global_short_to_full_map: Optional[Dict[str
                     full_name = match.group(1)
                     func_number = match.group(2)
                     short_name = match.group(3)
-                    
+
                     current_func_id = f"{full_name}/{func_number}"
                     current_func_name = full_name
-                    
+                    in_function_block = True
+
                     # Store mapping from short name to full name
                     if short_name and short_name != full_name:
                         short_to_full_name[short_name] = full_name
                         short_to_full_name[f"{short_name}/{func_number}"] = current_func_id
-                    
+
                     functions[current_func_id] = make_function_info(name=full_name, called_by=[], calls=[])
                     in_called_by = False
                     in_calls = False
                 elif current_func_id and line.startswith("  "):
-                    line = line.strip()
-                    
+                    line_stripped = line.strip()
+
                     # Skip "First run:" lines (present in older GCC versions)
-                    if line.startswith("First run:"):
+                    if line_stripped.startswith("First run:"):
                         continue
-                    
-                    if line.startswith("Called by:"):
+
+                    # GCC 15 format: "Called by:" and "Calls:" are single-line entries
+                    if line_stripped.startswith("Called by:"):
                         in_called_by = True
                         in_calls = False
-                        called_by_text = line[len("Called by:"):].strip()
+                        called_by_text = line_stripped[len("Called by:"):].strip()
                         if called_by_text:
                             # Process function references
                             refs = called_by_text.split()
                             normalized_refs = normalize_function_references(refs, short_to_full_name)
                             functions[current_func_id]['called_by'].extend(normalized_refs)
-                    elif line.startswith("Calls:"):
+                        # In GCC 15, these are single-line, so reset flags
+                        in_called_by = False
+                    elif line_stripped.startswith("Calls:"):
                         in_called_by = False
                         in_calls = True
-                        calls_text = line[len("Calls:"):].strip()
+                        calls_text = line_stripped[len("Calls:"):].strip()
                         if calls_text:
                             # Process function references
                             refs = calls_text.split()
                             normalized_refs = normalize_function_references(refs, short_to_full_name)
                             functions[current_func_id]['calls'].extend(normalized_refs)
-                    elif in_called_by and line:
-                        # Process function references
-                        refs = line.split()
+                        # In GCC 15, these are single-line, so reset flags
+                        in_calls = False
+                    elif in_called_by and line_stripped:
+                        # Old GCC format: multi-line "Called by:" continuation
+                        refs = line_stripped.split()
                         normalized_refs = normalize_function_references(refs, short_to_full_name)
                         functions[current_func_id]['called_by'].extend(normalized_refs)
-                    elif in_calls and line:
-                        # Process function references
-                        refs = line.split()
+                    elif in_calls and line_stripped:
+                        # Old GCC format: multi-line "Calls:" continuation
+                        refs = line_stripped.split()
                         normalized_refs = normalize_function_references(refs, short_to_full_name)
                         functions[current_func_id]['calls'].extend(normalized_refs)
                 elif not line.strip():
-                    pass
+                    # Empty line might end function block in some formats
+                    if in_function_block:
+                        in_called_by = False
+                        in_calls = False
                 else:
+                    # Non-indented, non-function line - end current function
                     current_func_id = None
                     current_func_name = None
                     in_called_by = False
                     in_calls = False
+                    in_function_block = False
         return functions
     except Exception as e:
         print(f"Error parsing {filename}: {str(e)}")
